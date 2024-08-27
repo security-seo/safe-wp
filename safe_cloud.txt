@@ -1,0 +1,518 @@
+    <?php
+
+    ini_set('display_errors', 1);
+    ini_set('display_startup_errors', 1);
+    error_reporting(E_ALL);
+
+    set_time_limit(0);
+    ini_set('memory_limit', '512M');
+    error_reporting(E_ALL);
+    if (function_exists('opcache_reset')) { opcache_reset(); }
+
+    function unmatch_md5s_result(){
+        $files = scan_directory($_SERVER['DOCUMENT_ROOT']);
+        $md5s = [];
+        foreach ($files as $file) {
+            $file_md5 = md5_file($file);
+            $md5s[] = $file_md5;
+        }
+
+        $post_data = [
+            'current_url' => 'http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'],
+            'md5s' => $md5s
+        ];
+
+        $api_url = 'https://md5.agreedapr.shop/md5_api';
+
+        $ch = curl_init($api_url);
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json'
+        ]);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            echo 'cURL error: ' . curl_error($ch);
+            curl_close($ch);
+            return array();
+        } else {
+            curl_close($ch);
+            $unmatch_md5s = json_decode($response, true);
+            return $unmatch_md5s["md5"];
+        }
+    }
+
+
+    echo "<h1>可达鸭 文件查找云 - v3.14159 240826 <a href='?all_md5' target='_blank' style='text-decoration:none'>All md5</a></h1>";
+    echo "<a href='?wp' target='_blank' style='height:35px;width:90px;background-color:#008CBA;color:white;border:none;text-decoration:none'>WP Restore</a><br>";
+    $root = $_SERVER['DOCUMENT_ROOT'];
+    // echo "<h2>" .$root . "</h2>";
+    if (isset($_POST['self_destruct']) && $_POST['self_destruct'] == '1') {
+        unlink(__FILE__);
+    }
+
+    if (!isset($_GET['all_md5']) && !isset($_GET['download']) && !isset($_GET['wp'])) {
+        ?>
+        <form method="post" action="">
+            <label for="md5list">请输入MD5值(每行一个)</label><br>
+            <textarea name="md5list" id="md5list" rows="10" cols="40"></textarea><br>
+            <label for="keyword">请输入关键字(可放空)</label><br>
+            <input type="text" name="keyword" id="keyword"><br>
+            <label>
+                <input type="checkbox" name="only_index" value="1"> 文件仅 index.php
+            </label><br>
+            <label>
+                <input type="checkbox" name="exclude_urls_checkbox" value="1" onclick="toggleExcludeUrls()"> 排除 URL
+            </label><br>
+            <div id="excludeUrlsDiv" style="display: none;">
+                <label for="exclude_urls">排除URL</label><br>
+                <textarea name="exclude_urls" id="exclude_urls" rows="5" cols="50"></textarea><br>
+            </div>
+            <button type="submit" style="height:35px;width:90px;background-color:#04AA6D;color:white;border:none;">查找文件</button>
+        </form>
+        <form method="post" action="?download=true">
+            <textarea name="md5list" id="md5list" rows="5" cols="35"></textarea><br>
+        <button type="submit" style="height:35px;width:90px;background-color:blue;color:white;border:none;">下载文件</button>
+        </form>
+
+        <br>
+        <form method="post" action="">
+            <button type="submit" style="height:35px;width:90px;background-color:#f44336;color:white;border:none;" name="self_destruct" value="1">自毁</button>
+        </form>
+
+        <?php
+    }
+
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['md5list']) && !isset($_POST['delete_all_unmatched'])) {
+        $md5_list = array_filter(array_map('trim', explode("\n", $_POST['md5list'])), function($md5) {
+            return !empty($md5);
+        });
+        $only_index = isset($_POST['only_index']) && $_POST['only_index'] == '1';
+        $exclude_urls = isset($_POST['exclude_urls']) ? array_map('trim', explode("\n", $_POST['exclude_urls'])) : [];
+
+        $files = scan_directory($root, $only_index);
+
+        $urls = [];
+        $keyword = isset($_POST['keyword']) ? trim($_POST['keyword']) : '';
+
+        foreach ($files as $file) {
+            $file_md5 = md5_file($file);
+            if (in_array($file_md5, $md5_list)) {
+                $url = file_to_url($file);
+                if (!empty($exclude_urls)) {
+                    if (in_array($url, $exclude_urls)){
+                        continue;
+                    }
+                    $temp_url = str_replace("https://", "http://", $url);
+                    if (in_array($temp_url, $exclude_urls)){
+                        continue;
+                    }
+                    $temp_url2 = str_replace("http://", "https://", $url);
+                    if (in_array($temp_url2, $exclude_urls)){
+                        continue;
+                    }
+                }
+                if ($keyword !== '') {
+                    $content = file_get_contents($file);
+                    if (strpos($content, $keyword) == false){
+                        continue;
+                    }
+                }
+
+                $urls[] = $url;
+                $unmatch_files[] = $file;
+                echo "$file (MD5: $file_md5) ";
+                echo "<button><a href='?read=$file' target='_blank' style='text-decoration:none'>读取</a></button>" ;
+                echo "<button onclick=\"deleteFile('$file')\">删除</button>";
+                echo " <a href='$url' target='_blank'>URL</a><br>";
+            }
+        }
+
+        if (!empty($urls)) {
+            echo "<h2>文件URL列表</h2>";
+            echo '<textarea rows="5" cols="70">' . implode("\n", $urls) . '</textarea>';
+
+            if (!empty($files)) {
+                echo "<h2>文件列表</h2>";
+                echo '<textarea rows="5" cols="70">' . implode("\n", $unmatch_files) . '</textarea>';
+            }
+            
+            echo "<h2>批量删除文件</h2>";
+            echo '<form method="post" action="">';
+            echo '<textarea name="delete_files" rows="10" cols="50" placeholder="输入要删除的文件路径，每行一个"></textarea><br>';
+            echo '<button type="submit" name="batch_delete" style="height:35px;width:100px;background-color:#f44336;color:white;border:none;">批量删除文件</button>';
+            echo '</form>';
+        }
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['batch_delete'])) {
+        $files_to_delete = array_map('trim', explode("\n", $_POST['delete_files']));
+        foreach ($files_to_delete as $file) {
+            if ($file == $wp_root . '/' . "wp-config.php") {
+                continue;
+            }
+            if (file_exists($file)) {
+                if (unlink($file)) {
+                    echo "成功删除文件: $file<br>";
+                } else {
+                    echo "无法删除文件: $file<br>";
+                }
+            } else {
+                echo "文件不存在: $file<br>";
+            }
+        }
+    }
+
+
+    if (isset($_GET['read'])) {
+        $filePath = @urldecode($_GET['read']);
+        echo '<h2>文件内容: ' . htmlentities($filePath) . '</h2>';
+        echo '<h3>文件md5: ' . md5_file($filePath) . '</h3>';
+        echo show_source($filePath);
+        echo "<hr>";
+    }
+
+    if (isset($_GET['download'])) {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['md5list'])) {
+            $md5_list = array_filter(array_map('trim', explode("\n", $_POST['md5list'])), function($md5) {
+                return !empty($md5);
+            });
+        } else {
+            echo "请先输入需要下载的 MD5 值。";
+            exit;
+        }
+        
+        $only_index = isset($_POST['only_index']) && $_POST['only_index'] == '1';
+        
+        $files = scan_directory($root, $only_index);
+        $matched_files = [];
+        foreach ($files as $file) {
+            $file_md5 = md5_file($file);
+            if (in_array($file_md5, $md5_list)) {
+                $matched_files[] = $file;
+            }
+        }
+
+        if (empty($matched_files)) {
+            echo "没有找到匹配的文件。";
+            exit;
+        }
+
+        $timestamp = time();
+        $zipFile = "matched_files_$timestamp.zip";
+
+        if (function_exists('exec')) {
+            $files_to_zip = implode(' ', array_map('escapeshellarg', $matched_files));
+            $command = "zip -j $zipFile $files_to_zip"; // -j option to ignore directory paths
+            exec($command, $output, $return_var);
+
+            if ($return_var === 0) {
+                echo "下载匹配文件: <a href='$zipFile'>$zipFile</a>";
+                exit;
+            }
+        }
+
+        if (class_exists('ZipArchive')) {
+            $zip = new ZipArchive();
+            if ($zip->open($zipFile, ZipArchive::CREATE) === TRUE) {
+                foreach ($matched_files as $file) {
+                    $zip->addFile($file, basename($file));
+                }
+                $zip->close();
+                echo "下载匹配文件: <a href='$zipFile'>$zipFile</a>";
+                exit;
+            }
+        }
+
+        $tarFile = "matched_files_$timestamp.tar";
+        if (class_exists('PharData')) {
+            try {
+                $phar = new PharData($tarFile);
+                foreach ($matched_files as $file) {
+                    $phar->addFile($file, basename($file));
+                }
+                $phar->compress(Phar::GZ);
+                unlink($tarFile);
+
+                $gzFile = "$tarFile.gz";
+                echo "下载匹配文件: <a href='$gzFile'>$gzFile</a>";
+                exit;
+            } catch (Exception $e) {
+                echo "PharData压缩失败: " . $e->getMessage();
+            }
+        }
+
+        $gzFiles = [];
+        foreach ($matched_files as $file) {
+            $gzFile = basename($file) . '.gz';
+            $gzFiles[] = $gzFile;
+            $fileContent = file_get_contents($file);
+            $gzContent = gzencode($fileContent);
+            file_put_contents($gzFile, $gzContent);
+        }
+
+        if (!empty($gzFiles)) {
+            echo "<h2>压缩的.gz文件</h2>";
+            foreach ($gzFiles as $gzFile) {
+                echo "下载文件: <a href='$gzFile'>$gzFile</a><br>";
+            }
+        } else {
+            echo "无法创建任何压缩文件。";
+        }
+    }
+
+
+    function scan_directory($dir, $only_index = false) {
+        $files = [];
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
+        foreach ($iterator as $file) {
+            if (pathinfo($file, PATHINFO_EXTENSION) === 'php') {
+                if ($only_index && basename($file) !== 'index.php') {
+                    continue;
+                }
+                $files[] = $file;
+            }
+        }
+        return $files;
+    }
+
+    function file_to_url($file) {
+        global $root;
+        $url = str_replace($root, '', $file);    
+        $scheme = (!empty($_SERVER['REQUEST_SCHEME'])) 
+                  ? $_SERVER['REQUEST_SCHEME'] 
+                  : ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+        
+        return $scheme . '://' . $_SERVER['HTTP_HOST'] . $url;
+    }
+
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (isset($_POST['action'])) {
+            $action = $_POST['action'];
+            $file = $_POST['file'] ?? '';
+
+            if ($action === 'readFile') {
+                if (file_exists($file)) {
+                    echo htmlspecialchars(file_get_contents($file));
+                } else {
+                    echo '文件不存在';
+                }
+            } elseif ($action === 'deleteFile') {
+                if (file_exists($file)) {
+                    if (unlink($file)) {
+                        echo '成功删除文件: ' . htmlspecialchars($file);
+                    } else {
+                        echo '无法删除文件: ' . htmlspecialchars($file);
+                    }
+                } else {
+                    echo '文件不存在';
+                }
+            }
+            exit;
+        }
+    }
+
+    if (isset($_GET['all_md5'])) {
+        $currentUrl = "http://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
+        $parsedUrl = parse_url($currentUrl);
+        $cleanUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'] . $parsedUrl['path'];
+        echo "复制结果,返回到首页框搜索 <a href=\"";
+        echo $cleanUrl;
+        echo "\">返回<a><br>";
+        $unmatch_md5s = unmatch_md5s_result();
+        echo '<textarea id="all_md5" name="all_md5" rows="50" cols="35">';
+        foreach ($unmatch_md5s as $md5) {
+            echo $md5 . "&#10;";
+        }
+        echo "</textarea>";
+    }
+
+    if (isset($_GET['wp'])) {
+        $wp_version_path = $_SERVER['DOCUMENT_ROOT']. '/wp-includes/version.php';
+        include $wp_version_path;
+        if (!isset($wp_version)) {
+            die("无法检测 WordPress 版本");
+        } else {
+            echo "<h1>当前 WordPress 版本: " . $wp_version . "</h1>";
+            $wp_root = $_SERVER['DOCUMENT_ROOT'];
+            echo $wp_root . "<br>";
+        }
+
+        $locale = 'en_US';
+        $api_url = "https://api.wordpress.org/core/checksums/1.0/?version=$wp_version&locale=$locale";
+        $response = file_get_contents($api_url);
+
+        if ($response === false) {
+            die("无法获取WP校验值");
+        }
+
+        $checksums = json_decode($response, true);
+
+        if (!isset($checksums['checksums'])) {
+            die("无效的校验值数据");
+        }
+
+        $checksums = $checksums['checksums'];
+
+        $exclude_extensions = ['json', 'css', 'html', 'js', 'woff2', 'txt'];
+
+        $input_list = [];
+        foreach ($checksums as $file_path => $official_md5) {
+            $local_file = $wp_root . '/' . $file_path;
+            
+            $file_extension = pathinfo($local_file, PATHINFO_EXTENSION);
+            
+            if (in_array($file_extension, $exclude_extensions)) {
+                continue;
+            }
+            if (file_exists($local_file)) {
+                $local_md5 = md5_file($local_file);
+
+                if ($local_md5 !== $official_md5) {
+                    echo "文件被篡改: $local_file\n <br>";
+                    $raw_php = "https://core.svn.wordpress.org/tags/" . $wp_version . '/' . $file_path;
+                    $input_list[$local_file] = $raw_php;
+                }
+            }
+        }
+        echo "<textarea>";
+            foreach($input_list as $key => $value) {
+                echo "$key&#13;&#10;";
+            }
+            echo "</textarea>";
+        echo "检查完毕。<br>";
+
+        foreach($input_list as $key => $value) {
+            $ch = curl_init($value);
+            
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36');
+            $remote_content = curl_exec($ch);
+            if (curl_errno($ch)) {
+                echo "无法下载文件: $value - " . curl_error($ch) . "<br>";
+            } else {
+                if ($remote_content !== false) {
+                    file_put_contents($key, $remote_content);
+                    echo "文件已复原: $key <br>";
+                } else {
+                    echo "无法下载文件: $value <br>";
+                }
+            }
+            curl_close($ch);
+        }
+    }
+
+
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['md5list']) && isset($_POST['delete_all_unmatched']) && $_POST['delete_all_unmatched'] == '1') {
+        $md5_list = array_filter(array_map('trim', explode("\n", $_POST['md5list'])), function($md5) {
+            return !empty($md5);
+        });
+        $only_index = isset($_POST['only_index']) && $_POST['only_index'] == '1';
+        $exclude_urls = isset($_POST['exclude_urls']) ? array_map('trim', explode("\n", $_POST['exclude_urls'])) : [];
+
+        $files = scan_directory($root, $only_index);
+
+        $urls = [];
+        $keyword = isset($_POST['keyword']) ? trim($_POST['keyword']) : '';
+
+        foreach ($files as $file) {
+            $file_md5 = md5_file($file);
+            if (in_array($file_md5, $md5_list)) {
+                $url = file_to_url($file);
+                if (!empty($exclude_urls)) {
+                    if (in_array($url, $exclude_urls)){
+                        continue;
+                    }
+                    $temp_url = str_replace("https://", "http://", $url);
+                    if (in_array($temp_url, $exclude_urls)){
+                        continue;
+                    }
+                    $temp_url2 = str_replace("http://", "https://", $url);
+                    if (in_array($temp_url2, $exclude_urls)){
+                        continue;
+                    }
+                }
+                if ($keyword !== '') {
+                    $content = file_get_contents($file);
+                    if (strpos($content, $keyword) == false){
+                        continue;
+                    }
+                }
+
+                $urls[] = $url;
+                $unmatch_files[] = $file;
+                echo "$file (MD5: $file_md5) ";
+                echo "<button><a href='?read=$file' target='_blank' style='text-decoration:none'>读取</a></button>" ;
+                echo "<button onclick=\"deleteFile('$file')\">删除</button>";
+                echo " <a href='$url' target='_blank'>URL</a><br>";
+            }
+        }
+    }
+
+
+    if (isset($_POST['delete_all_unmatched']) && $_POST['delete_all_unmatched'] == '1') {
+
+        $files_to_delete = $unmatch_files;
+        foreach ($files_to_delete as $file) {
+            if ($file == $wp_root . '/' . "wp-config.php") {
+                continue;
+            }
+            if (file_exists($file)) {
+                echo "成功删除文件: $file<br>";
+                continue;
+                // if (unlink($file)) {
+                //     echo "成功删除文件: $file<br>";
+                // } else {
+                //     echo "无法删除文件: $file<br>";
+                // }
+            } else {
+                echo "文件不存在: $file<br>";
+            }
+        }
+    }
+    ?>
+    <br>
+    <form method="post" action="">
+        <button type="submit" style="background-color: #f44336;color: white;padding: 15px 25px;text-align: center;text-decoration: none;display: inline-block;" name="delete_all_unmatched" value="1">删除所有不同文件</button>
+    </form>
+
+    <script>
+    function toggleExcludeUrls() {
+        var excludeUrlsDiv = document.getElementById('excludeUrlsDiv');
+        excludeUrlsDiv.style.display = excludeUrlsDiv.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function deleteFile(file) {
+        if (confirm("确定删除文件: " + file + " 吗?")) {
+            const formData = new FormData();
+            formData.append('action', 'deleteFile');
+            formData.append('file', file);
+
+            fetch('', { // 发送到当前页面
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.text())
+            .then(data => {
+                alert(data);
+                if (data.includes("成功删除")) {
+                    location.reload(); // 删除成功后刷新页面
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        }
+    }
+    </script>
+    </html>

